@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Color Theory Picker</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  body{margin:0;padding:20px;font:16px/1.4 system-ui,sans-serif;background:#fff;color:#111;}
+  h1{margin-top:0;}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;}
+  button{padding:8px 12px;border:1px solid #ccc;background:#f3f4f6;border-radius:8px;cursor:pointer;font-weight:600;}
+  button[disabled]{opacity:.5;cursor:not-allowed;}
+  .selected{display:flex;flex-direction:column;gap:8px;margin-top:15px;}
+  .item{display:flex;align-items:center;gap:6px;}
+  .swatch{width:32px;height:32px;border-radius:4px;border:1px solid #ccc;}
+  .hex{width:90px;padding:4px;font-family:monospace;}
+  .mini{width:16px;height:16px;border-radius:4px;border:1px solid #ccc;display:inline-block;margin-right:4px;}
+  .mapping,.relationships{margin-top:20px;}
+  .maprow,.relrow{display:flex;align-items:center;gap:8px;margin:4px 0;}
+  .wheel{position:relative;width:240px;height:240px;border-radius:50%;margin-bottom:20px;}
+  .wheel-dot{position:absolute;width:10px;height:10px;border-radius:50%;border:2px solid #fff;transform:translate(-50%,-50%);}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(20px);background:#333;color:#fff;padding:8px 12px;border-radius:6px;opacity:0;transition:.25s;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+  <h1>Color Theory Picker</h1>
+  <div class="controls">
+    <button id="addBtn">Add color</button>
+    <button id="removeBtn" disabled>Remove color</button>
+    <button id="mapBtn" disabled>Map colors</button>
+  </div>
+  <div id="selected" class="selected"></div>
+  <div id="mapping" class="mapping"></div>
+  <div id="relationships" class="relationships"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div>Note - Works best in Chromium browsers, e.g. Google Chrome</div>
+  
+<script>
+(function(){
+  const addBtn=document.getElementById('addBtn');
+  const removeBtn=document.getElementById('removeBtn');
+  const mapBtn=document.getElementById('mapBtn');
+  const selectedEl=document.getElementById('selected');
+  const mappingEl=document.getElementById('mapping');
+  const relEl=document.getElementById('relationships');
+  const toast=document.getElementById('toast');
+
+  const storeKey='colortheory_colors';
+  let picked;
+  try{
+    const saved=JSON.parse(localStorage.getItem(storeKey)||'null');
+    if(Array.isArray(saved)&&saved.length){
+      picked=saved.filter(c=>/^#[0-9A-F]{6}$/i.test(c)).slice(0,10).map(c=>c.toUpperCase());
+    }
+  }catch(e){}
+  if(!Array.isArray(picked)||!picked.length){
+    picked=Array(5).fill('#000000');
+  }
+  const save=()=>localStorage.setItem(storeKey,JSON.stringify(picked));
+
+  const showToast=msg=>{
+    toast.textContent=msg;
+    toast.classList.add('show');
+    setTimeout(()=>toast.classList.remove('show'),1200);
+  };
+
+  function renderSelected(){
+    selectedEl.innerHTML='';
+    picked.forEach((hex,i)=>{
+      const item=document.createElement('div');
+      item.className='item';
+      const sw=document.createElement('div');
+      sw.className='swatch';
+      sw.style.background=hex;
+      const input=document.createElement('input');
+      input.className='hex';
+      input.value=hex;
+      const colorInput=document.createElement('input');
+      colorInput.type='color';
+      colorInput.style.display='none';
+      colorInput.value=hex;
+      colorInput.addEventListener('input',e=>{
+        const val=e.target.value.toUpperCase();
+        picked[i]=val;
+        input.value=val;
+        sw.style.background=val;
+        save();
+      });
+      input.addEventListener('input',e=>{
+        let val=e.target.value.trim().toUpperCase();
+        if(!val.startsWith('#')) val='#'+val;
+        if(/^#[0-9A-F]{6}$/.test(val)){
+          picked[i]=val;
+          sw.style.background=val;
+          colorInput.value=val;
+          save();
+        }
+      });
+      const drop=document.createElement('button');
+      drop.textContent='Pick';
+      drop.addEventListener('click',async()=>{
+        if('EyeDropper'in window){
+          try{
+            const res=await new EyeDropper().open();
+            const hex=res?.sRGBHex?.toUpperCase?.();
+            if(/^#[0-9A-F]{6}$/.test(hex)){
+              picked[i]=hex;
+              input.value=hex;
+              sw.style.background=hex;
+              colorInput.value=hex;
+              save();
+            }
+          }catch(e){}
+        }else if(navigator.mediaDevices?.getDisplayMedia){
+          try{
+            const stream=await navigator.mediaDevices.getDisplayMedia({video:true});
+            const video=document.createElement('video');
+            video.srcObject=stream;
+            await video.play();
+            const canvas=document.createElement('canvas');
+            const ctx=canvas.getContext('2d');
+            canvas.width=video.videoWidth;
+            canvas.height=video.videoHeight;
+            ctx.drawImage(video,0,0,canvas.width,canvas.height);
+            stream.getTracks().forEach(t=>t.stop());
+            video.remove();
+            canvas.style.position='fixed';
+            canvas.style.top='0';
+            canvas.style.left='0';
+            canvas.style.width='100vw';
+            canvas.style.height='100vh';
+            canvas.style.zIndex='10000';
+            canvas.style.cursor='crosshair';
+            document.body.append(canvas);
+            const pick=e=>{
+              const rect=canvas.getBoundingClientRect();
+              const x=Math.round((e.clientX-rect.left)*(canvas.width/rect.width));
+              const y=Math.round((e.clientY-rect.top)*(canvas.height/rect.height));
+              const data=ctx.getImageData(x,y,1,1).data;
+              const hex='#'+[data[0],data[1],data[2]].map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase();
+              picked[i]=hex;
+              input.value=hex;
+              sw.style.background=hex;
+              colorInput.value=hex;
+              save();
+              canvas.removeEventListener('click',pick);
+              canvas.remove();
+            };
+            canvas.addEventListener('click',pick);
+          }catch(e){
+            colorInput.click();
+          }
+        }else{
+          colorInput.click();
+        }
+      });
+      item.append(sw,input,drop,colorInput);
+      selectedEl.append(item);
+    });
+    removeBtn.disabled=picked.length===0;
+    mapBtn.disabled=picked.length===0;
+    addBtn.disabled=picked.length>=10;
+    save();
+  }
+
+  function hexToRgb(hex){
+    const v=hex.replace('#','');
+    const bigint=parseInt(v,16);
+    return {r:(bigint>>16)&255,g:(bigint>>8)&255,b:bigint&255};
+  }
+  function rgbToHsl(r,g,b){
+    r/=255;g/=255;b/=255;
+    const max=Math.max(r,g,b),min=Math.min(r,g,b);
+    let h,s,l=(max+min)/2;
+    if(max===min){h=s=0;}
+    else{
+      const d=max-min;
+      s=l>0.5?d/(2-max-min):d/(max+min);
+      switch(max){
+        case r:h=(g-b)/d+(g<b?6:0);break;
+        case g:h=(b-r)/d+2;break;
+        case b:h=(r-g)/d+4;break;
+      }
+      h*=60;
+    }
+    return {h:(h+360)%360,s:s*100,l:l*100};
+  }
+  function hslToHex(h,s,l){
+    s/=100;l/=100;
+    const k=n=>(n+h/30)%12;
+    const a=s*Math.min(l,1-l);
+    const f=n=>l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1)));
+    return '#'+[f(0),f(8),f(4)].map(x=>{
+      const v=Math.round(255*x).toString(16).padStart(2,'0');
+      return v;
+    }).join('');
+  }
+
+  const wheel=Array.from({length:24},(_,i)=>{
+    const h=(60+i*15)%360;
+    return {h,hex:hslToHex(h,100,50),name:`Hue ${h}\u00B0`};
+  });
+
+  function mapToWheel(hex){
+    const {h,s,l}=rgbToHsl(...Object.values(hexToRgb(hex)));
+    let best=0,bestDiff=1e9;
+    wheel.forEach((w,i)=>{
+      const diff=Math.min(Math.abs(h-w.h),360-Math.abs(h-w.h));
+      if(diff<bestDiff){best=i;bestDiff=diff;}
+    });
+    return {index:best,wheel:wheel[best],h,s,l};
+  }
+
+  function renderMapping(mappings){
+    mappingEl.innerHTML='';
+    const wheelDiv=document.createElement('div');
+    wheelDiv.className='wheel';
+    const grad=wheel.map((w,i)=>`${w.hex} ${i*15}deg ${(i+1)*15}deg`).join(',');
+    wheelDiv.style.background=`conic-gradient(from -7.5deg, ${grad})`;
+    mappingEl.append(wheelDiv);
+    const radius=wheelDiv.clientWidth/2;
+    mappings.forEach(m=>{
+      const angle=(m.h-150)*Math.PI/180;
+      const rPos=(m.s/100)*(radius-5);
+      const x=radius+rPos*Math.cos(angle);
+      const y=radius+rPos*Math.sin(angle);
+      const dot=document.createElement('div');
+      dot.className='wheel-dot';
+      dot.style.background=m.hex;
+      dot.style.left=x+'px';
+      dot.style.top=y+'px';
+      wheelDiv.append(dot);
+
+      const row=document.createElement('div');
+      row.className='maprow';
+      const inSw=document.createElement('span');
+      inSw.className='mini';
+      inSw.style.background=m.hex;
+      const outSw=document.createElement('span');
+      outSw.className='mini';
+      outSw.style.background=m.wheel.hex;
+      row.append(
+        inSw,
+        document.createTextNode(m.hex+' \u2192 '),
+        outSw,
+        document.createTextNode('Code '+(m.index+1)+' ('+m.wheel.name+')')
+      );
+      mappingEl.append(row);
+    });
+  }
+
+  function renderRelationships(mappings){
+    relEl.innerHTML='';
+    for(let i=0;i<mappings.length;i++){
+      for(let j=i+1;j<mappings.length;j++){
+        const a=mappings[i],b=mappings[j];
+        let diff=Math.abs(a.index-b.index);
+        diff=Math.min(diff,24-diff);
+        const rel=[];
+        if(diff===0) rel.push('same color wedge');
+        if(diff!==0 && diff<=2) rel.push('analogous');
+        if(diff===12) rel.push('complementary');
+        if(diff===8) rel.push('triadic');
+        if(diff===10) rel.push('split-complementary');
+        if(diff===6) rel.push('square');
+        if(rel.length){
+          const row=document.createElement('div');
+          row.className='relrow';
+          const sw1=document.createElement('span');
+          sw1.className='mini';
+          sw1.style.background=a.hex;
+          const sw2=document.createElement('span');
+          sw2.className='mini';
+          sw2.style.background=b.hex;
+          row.append(sw1,document.createTextNode(a.hex+' and '),sw2,document.createTextNode(b.hex+' are '+rel.join(', ')+'.'));
+          relEl.append(row);
+        }
+      }
+    }
+  }
+
+  addBtn.addEventListener('click',()=>{
+    if(picked.length>=10){showToast('Maximum of 10 colors');return;}
+    picked.push('#000000');
+    renderSelected();
+  });
+
+  removeBtn.addEventListener('click',()=>{
+    if(picked.length>0){picked.pop();renderSelected();}
+  });
+
+  mapBtn.addEventListener('click',()=>{
+    const valid=picked.filter(hex=>/^#[0-9A-F]{6}$/.test(hex));
+    if(!valid.length){showToast('Enter colors first');return;}
+    const mappings=valid.map(hex=>({hex,...mapToWheel(hex)}));
+    renderMapping(mappings);
+    renderRelationships(mappings);
+  });
+
+  renderSelected();
+})();
+</script>
+</body>
+</html>
